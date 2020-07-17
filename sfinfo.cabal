@@ -1,0 +1,93 @@
+cabal-version:       2.4
+name:                sfinfo
+version:             0.0.0.0
+synopsis:            Software Factory Release Tools
+description:
+    Software Factory Release Tools.
+    See README.md for more details.
+license:             Apache-2.0
+license-file:        LICENSE
+author:              Software Factory Dev
+maintainer:          Software Factory Dev <softwarefactory-dev@redhat.com>
+copyright:           2020 Red Hat
+category:            Development
+build-type:          Simple
+extra-doc-files:     README.md
+tested-with:         GHC == 8.6.5
+
+common common-options
+  build-depends:       base
+                     , turtle
+                     , network-uri
+                     , text
+                     , random
+                     , directory
+                     , time
+                     , cryptonite
+                     , simple-cmd
+                     , ansi-wl-pprint
+                     -- Internal dep
+                     , gerrit
+                     , podman
+
+  ghc-options:         -Wall
+                       -Wcompat
+                       -Widentities
+                       -Wincomplete-uni-patterns
+                       -Wincomplete-record-updates
+                       -Wredundant-constraints
+                       -- Let's keep unused imports around as documentation purpose
+                       -Wno-unused-imports
+  if impl(ghc >= 8.2)
+    ghc-options:       -fhide-source-paths
+  if impl(ghc >= 8.4)
+    ghc-options:       -Wmissing-export-lists
+                       -Wpartial-fields
+  if impl(ghc >= 8.10)
+    ghc-options:       -Wunused-packages
+
+  default-extensions:  NamedFieldPuns
+                     , OverloadedStrings
+                     , RecordWildCards
+                     , LambdaCase
+  default-language:    Haskell2010
+
+library
+  import:              common-options
+  hs-source-dirs:      src
+  exposed-modules:     Sfinfo
+                     , Sfinfo.Cloner
+                     , Sfinfo.PipNames
+                     , Sfinfo.RpmSpec
+
+executable sfinfo
+  import:              common-options
+  hs-source-dirs:      app
+  main-is:             Main.hs
+  build-depends:       sfinfo
+  ghc-options:         -threaded
+                       -rtsopts
+                       -with-rtsopts=-N
+
+test-suite sfinfo-test
+  import:              common-options
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      test
+  main-is:             RpmSpec.hs
+  build-depends:       sfinfo
+                     , tasty
+                     , tasty-hunit
+  ghc-options:         -threaded
+                       -rtsopts
+                       -with-rtsopts=-N
+
+test-suite sfinfo-doctest
+  import:              common-options
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      test
+  main-is:             Spec.hs
+  build-depends:       sfinfo
+                     , doctest
+  ghc-options:         -threaded
+                       -rtsopts
+                       -with-rtsopts=-N
