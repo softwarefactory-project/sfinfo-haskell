@@ -1,0 +1,21 @@
+- project:
+    check: &jobs
+      jobs:
+        - linters
+        - haskell-stack-test:
+            vars:
+              lts_version: lts-16.5
+              haskell_stack_target: sfinfo
+            nodeset:
+              nodes:
+                - name: container
+                  label: pod-haskell-lts-16
+            required-projects:
+              - software-factory/gerrit-haskell
+              - software-factory/podman-haskell
+        - hlint:
+            nodeset:
+              nodes:
+                - name: container
+                  label: pod-haskell-f32
+    gate: *jobs

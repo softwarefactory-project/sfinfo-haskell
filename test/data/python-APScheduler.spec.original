@@ -1,0 +1,44 @@
+%global srcname APScheduler
+
+Name:           python3-APScheduler
+Version:        3.5.3
+Release:        3%{?dist}
+Summary:        In-process task scheduler with Cron-like capabilities
+
+License:        MIT
+URL:            http://pythonhosted.org/APScheduler/
+Source0:        https://github.com/agronholm/apscheduler/archive/v%{version}/python-APSscheduler-%{version}.tar.gz
+
+BuildArch:      noarch
+
+BuildRequires:  python3-devel
+BuildRequires:  python3-setuptools
+BuildRequires:  python3-setuptools-scm
+BuildRequires:  python3-tzlocal
+
+Requires:       python3-tzlocal
+
+
+%description
+In-process task scheduler with Cron-like capabilities
+
+%prep
+%autosetup -n apscheduler-%{version} -p1
+
+%build
+rm -Rf requirements.txt test-requirements.txt *.egg-info
+SETUPTOOLS_SCM_PRETEND_VERSION=%{version} PBR_VERSION=%{version} %{__python3} setup.py build
+
+%install
+SETUPTOOLS_SCM_PRETEND_VERSION=%{version} PBR_VERSION=%{version} %{__python3} setup.py install -O1 --skip-build --root %{buildroot}
+
+%check
+%{__python3} -c "import apscheduler"
+
+%files
+%defattr(644,root,root,755)
+%{python3_sitelib}/*
+
+%changelog
+* Thu Nov 22 2018 Tristan Cacqueray <tdecacqu@redhat.com> - 3.5.3-3
+- Bump to 3.5.3
