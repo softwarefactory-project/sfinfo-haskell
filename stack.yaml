@@ -1,4 +1,6 @@
 resolver: lts-16.3
 extra-deps:
+  - git: https://github.com/juhp/pkgtreediff.git
+    commit: 8256f1783adda7798678e832f704b86c23540401
   - ../gerrit-haskell
   - ../podman-haskell

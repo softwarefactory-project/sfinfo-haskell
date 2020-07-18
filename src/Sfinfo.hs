@@ -10,6 +10,7 @@ import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust, isNothing, mapMaybe)
 import qualified Data.Text as T
 import Data.Text (Text)
 import qualified Data.Text.IO as T
+import Distribution.RPM.PackageTreeDiff (Ignore (..), RpmPackage (..), RpmPackageDiff (..), diffPkgs, readRpmPkg, rpmPkgVerRel)
 import Gerrit (GerritClient)
 import qualified Gerrit
 import Podman (containerRunning, containerState, inspectContainer, isContainer)
@@ -160,17 +161,20 @@ comparePipAndRpm outputFile =
     -- pip freeze output of a zuul and nodepool venv
     pipVer <- cacheAndGet "pip.txt" getPipList
     -- rpm -qa output of an installation in sf-master
-    void $ cacheAndGet "rpm.txt" getRpmList
-    writeFile "pipRpm.txt" $ unlines $ mapMaybe convertPipFreezeToRpmQa pipVer
-    runDiff "missing.txt" "Missing package:" "--new"
-    runDiff (encodeString outputFile) "Outdated packages:" "--updated"
+    rpmVer <- cacheAndGet "rpm.txt" getRpmList
+    let pipVerAsRpm = Data.List.sort $ mapMaybe convertPipFreezeToRpmQa pipVer
+    writeFile "pipRpm.txt" (unlines pipVerAsRpm)
+    writeFile (encodeString outputFile) (unlines $ runDiff rpmVer pipVerAsRpm)
   where
-    runDiff fn desc flag = do
-      putStrLn desc
-      output <- cmd "pkgtreediff" ["--ignore-arch", "--ignore-release", flag, "./rpm.txt", "./pipRpm.txt"]
-      writeFile fn output
-      putStrLn output
-      putStrLn ""
+    runDiff :: [String] -> [String] -> [String]
+    runDiff rpms pips = map T.unpack $ mapMaybe createDiffString $ diffPkgs IgnoreRelease (map mkPkgs rpms) (map mkPkgs pips)
+    createDiffString :: RpmPackageDiff -> Maybe Text
+    createDiffString (PkgUpdate rpm pip) = Just $ rpmName rpm <> ": " <> rpmPkgVerRel rpm <> " -> " <> rpmPkgVerRel pip
+    createDiffString _ = Nothing
+    mkPkgs :: String -> RpmPackage
+    mkPkgs = dropArch . readRpmPkg . T.pack
+    dropArch :: RpmPackage -> RpmPackage
+    dropArch (RpmPkg n vr _) = RpmPkg n vr Nothing
     cacheAndGet :: String -> IO [String] -> IO [String]
     cacheAndGet fn action = doesFileExist fn >>= \case
       True -> (lines <$> readFile fn)

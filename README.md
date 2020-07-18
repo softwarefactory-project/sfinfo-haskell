@@ -19,13 +19,6 @@ Available commands:
   propose-update           Generate git reviews to bump outdated packages
 ```
 
-Install pkgtreediff:
-
-```ShellSession
-$ git clone https://github.com/juhp/pkgtreediff
-$ pushd pkgtreediff; stack install .; popd
-```
-
 Compute outdated package list:
 
 ```ShellSession
