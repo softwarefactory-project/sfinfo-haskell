@@ -3,6 +3,9 @@ module Sfinfo.Cloner
   ( clone,
     commit,
     gitReview,
+    reset,
+    mkChangeId,
+    urlToGitDir,
   )
 where
 
@@ -20,17 +23,31 @@ urlToDir url = do
   uriAuth <- uriAuthority uri
   return $ replace ".io/r/" ".io/" (pack (uriRegName uriAuth <> uriPath uri))
 
-commit :: MonadIO io => Text -> Text -> io Text
-commit gitDir commitMessage =
-  do
-    void $ Turtle.proc "/bin/git" gitargs mempty
-    pure changeIdStr
+mkChangeId :: Text -> Text -> Text
+mkChangeId gitDir commitMessage = "I" <> pack (show changeId)
   where
-    gitargs = ["-C", gitDir, "commit", "-a", "-m", commitMessage <> "\n\nChange-Id: " <> changeIdStr]
-    changeIdStr :: Text
-    changeIdStr = "I" <> pack (show changeId)
     changeId :: Digest SHA1
     changeId = hash (encodeUtf8 (gitDir <> commitMessage))
+
+git :: MonadIO io => Text -> [Text] -> io ()
+git gitDir args = void $ Turtle.proc "/bin/git" (["-C", gitDir] <> args) mempty
+
+reset :: MonadIO io => Text -> Text -> io ()
+reset gitDir ref = do
+  git gitDir ["clean", "-x", "-f", "-d"]
+  git gitDir ["fetch", "origin"]
+  git gitDir ["reset", "--hard", ref]
+
+commit :: MonadIO io => Text -> Text -> Text -> io ()
+commit gitDir commitMessage changeId = git gitDir gitArgs
+  where
+    gitArgs = ["commit", "-a", "-m", commitMessage <> "\n\nChange-Id: " <> changeId]
+
+urlToGitDir :: Text -> Text -> Text
+urlToGitDir base url =
+  case urlToDir url of
+    Nothing -> error "Invalid url"
+    Just urlDir -> base <> fromMaybe urlDir (stripSuffix ".git" urlDir)
 
 clone :: MonadIO io => Text -> Text -> io Text
 clone base url =

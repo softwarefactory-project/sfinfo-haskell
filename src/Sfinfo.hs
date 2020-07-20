@@ -1,6 +1,7 @@
 module Sfinfo
   ( proposeUpdate,
     comparePipAndRpm,
+    readPkgTreeDiffOutputFile,
   )
 where
 
@@ -16,7 +17,7 @@ import Distribution.RPM.PackageTreeDiff (Ignore (..), RpmPackage (..), RpmPackag
 import Gerrit (GerritClient)
 import qualified Gerrit
 import Podman (containerRunning, containerState, inspectContainer, isContainer)
-import Sfinfo.Cloner (clone, commit, gitReview)
+import Sfinfo.Cloner (clone, commit, gitReview, mkChangeId, reset, urlToGitDir)
 import Sfinfo.PipNames (ignoreList, pipList)
 import Sfinfo.RpmSpec (bumpVersion, getDate, getSpec)
 import SimpleCmd (cmd, cmdMaybe, cmd_)
@@ -49,16 +50,14 @@ readOutdatedLine line = (package, version)
 author :: Text
 author = "sfinfo <softwarefactory-dev@redhat.com>"
 
--- | Creat the bump version commit and return the changeID
-commitUpdate :: Text -> Text -> IO Text
-commitUpdate gitDir version =
-  do
-    (specPath, specContent) <- getSpec gitDir
-    date <- getDate
-    T.writeFile specPath (bumpVersion version author date specContent)
-    commit gitDir commitTitle
-  where
-    commitTitle = "Bump to " <> version
+--- | Creat the bump version commit
+commitUpdate :: Text -> Text -> Text -> Text -> IO ()
+commitUpdate gitDir changeId packageVersion commitTitle = do
+  reset gitDir "origin/master"
+  (specPath, specContent) <- getSpec gitDir
+  date <- getDate
+  T.writeFile specPath (bumpVersion packageVersion author date specContent)
+  commit gitDir commitTitle changeId
 
 approveChange :: GerritClient -> Gerrit.GerritChange -> IO ()
 approveChange client change =
@@ -73,54 +72,68 @@ queueLength pipelineName queueName = length . fromJust . Zuul.pipelineChanges pi
 getQueueLength :: ZuulClient -> Text -> IO Int
 getQueueLength zuulClient queueName = queueLength "gate" queueName <$> Zuul.getStatus zuulClient
 
+projectName :: Text -> Text
+projectName packageName = "rpms/" <> T.replace "python3-" "python-" packageName
+
 -- | This function returns either an optional (package, message) tuple, either a GerritChange to approve
 updatePackage :: GerritClient -> Text -> Text -> Text -> Text -> IO (Either (Maybe (Text, Text)) Gerrit.GerritChange)
 updatePackage gerritClient gerritUser home packageName packageVersion =
   do
-    gitDir <- clone gitBase projectUrl
-    print gitDir
-    changeId <- commitUpdate gitDir packageVersion
-    gerritChanges <- queryGerrit changeId gerritClient
+    gerritChanges <- Gerrit.queryChanges [Gerrit.Project project', Gerrit.ChangeId changeId] gerritClient
     case gerritChanges of
-      [] -> do
-        gitReview gerritUser projectName gitDir
-        infoResult "review submited"
+      [] -> proposeReview
       [change@Gerrit.GerritChange {..}]
         | status == Gerrit.MERGED -> skipResult
-        | Gerrit.isApproved change -> tryApprove change
+        -- TODO: if review parent is identic to local git parent then rebase and push
+        | Gerrit.hasLabel "Workflow" 1 change -> infoResult "already approved"
+        | Gerrit.hasLabel "Code-Review" 2 change -> addWorkflow change
         | otherwise -> infoResult $ changeUrl change <> " : need Approval"
       _ -> infoResult $ T.pack $ "multiple review opened: " <> show (map changeUrl gerritChanges)
   where
-    tryApprove = pure . Right
+    -- TODO: abandon old change when multiple review exist?
+    proposeReview = do
+      void $ clone gitBase projectUrl
+      commitUpdate gitDir changeId packageVersion commitTitle
+      gitReview gerritUser project' gitDir
+      infoResult "review submitted"
+    addWorkflow = pure . Right
     skipResult = pure $ Left Nothing
     infoResult txt = pure $ Left (Just (packageName, txt))
+    project' = projectName packageName
     changeUrl = Gerrit.changeUrl gerritClient
-    queryGerrit changeId = Gerrit.queryChanges [Gerrit.Project projectName, Gerrit.ChangeId changeId]
     gitBase = home <> "/src/"
-    projectName = "rpms/" <> T.replace "python3-" "python-" packageName
-    projectUrl = "https://softwarefactory-project.io/r/" <> projectName
+    projectUrl = "https://softwarefactory-project.io/r/" <> project'
+    gitDir = urlToGitDir gitBase projectUrl
+    changeId = mkChangeId gitDir commitTitle
+    commitTitle = "Bump to " <> packageVersion
 
+-- | This is the main CLI action that propose update based on the pkgtreediff output file
 proposeUpdate :: Text -> Text -> Text -> FilePath -> IO ()
-proposeUpdate home gerritUser queueName fn =
+proposeUpdate home gerritUser zuulQueueName pkgtreediffFile =
   Gerrit.withClient "https://softwarefactory-project.io/r" (Just gerritUser) $ \gerritClient ->
-    Zuul.withClient "https://softwarefactory-project.io/zuul/api/tenant/local" $ \zuulClient -> do
-      print $ "Proposing update using: " <> fn
+    Zuul.withClient "https://softwarefactory-project.io/zuul/api/tenant/local" $ \zuulClient ->
       go gerritClient zuulClient
   where
+    maxGateLength = 4
+    getUpdates gerritClient = mapM (uncurry (updatePackage gerritClient gerritUser home))
     go :: GerritClient -> ZuulClient -> IO ()
     go gerritClient zuulClient = do
-      updateListContent <- T.lines <$> T.readFile (encodeString fn)
-      results <- mapM (uncurry (updatePackage gerritClient gerritUser home) . readOutdatedLine) updateListContent
-      putDoc (green (text "Summary:\n"))
+      pkgsVers <- readPkgTreeDiffOutputFile pkgtreediffFile
+      results <- getUpdates gerritClient pkgsVers
       let infos = catMaybes $ lefts results
       let toApprove = rights results
       forM_ infos $ \(packageName, info) -> putStrLn $ T.unpack $ packageName <> ": " <> info
-      gateLength <- getQueueLength zuulClient queueName
-      if gateLength >= 4
+      gateLength <- getQueueLength zuulClient zuulQueueName
+      if gateLength >= maxGateLength
         then putStrLn "Zuul is too busy atm, try again later"
         else
           putDoc (green (text "Approving:\n"))
-            >> mapM_ (approveChange gerritClient) (take (4 - gateLength) toApprove)
+            >> mapM_ (approveChange gerritClient) (take (maxGateLength - gateLength) toApprove)
+
+readPkgTreeDiffOutputFile :: FilePath -> IO [(Text, Text)]
+readPkgTreeDiffOutputFile fn = do
+  fnContent <- T.lines <$> T.readFile (encodeString fn)
+  pure $ map readOutdatedLine fnContent
 
 -- | Convenient bind unless wrapper for the `if "test in IO" then "do this IO" pattern`
 --

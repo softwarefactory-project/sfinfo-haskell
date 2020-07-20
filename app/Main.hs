@@ -9,6 +9,7 @@ import Prelude hiding (FilePath)
 data Command = ComputeDiff FilePath | ProposeUpdate FilePath Text
   deriving (Show)
 
+-- See https://hackage.haskell.org/package/turtle-1.5.18/docs/Turtle-Options.html
 usage :: Parser Command
 usage = computeDiffUsage <|> proposeUpdateUsage
   where
