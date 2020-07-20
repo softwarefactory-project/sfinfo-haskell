@@ -21,6 +21,9 @@ import SimpleCmd (cmd, cmdMaybe, cmd_)
 import System.Directory (doesDirectoryExist, doesFileExist)
 import Text.PrettyPrint.ANSI.Leijen (green, putDoc, text)
 import Turtle (FilePath, encodeString)
+import Zuul (ZuulClient)
+import qualified Zuul
+import qualified Zuul.Status as Zuul
 import Prelude hiding (FilePath, id)
 
 -- | A breakOn that drops the seprator
@@ -55,8 +58,8 @@ commitUpdate gitDir version =
   where
     commitTitle = "Bump to " <> version
 
-updatePackage :: GerritClient -> Text -> Text -> (Text, Text) -> IO (Text, Maybe Text)
-updatePackage client home gerritUser (name, version) =
+updatePackage :: Bool -> GerritClient -> Text -> Text -> (Text, Text) -> IO (Text, Maybe Text)
+updatePackage _canApprove client home gerritUser (name, version) =
   do
     gitDir <- clone gitBase projectUrl
     changeId <- commitUpdate gitDir version
@@ -81,14 +84,23 @@ updatePackage client home gerritUser (name, version) =
     projectName = "rpms/" <> T.replace "python3-" "python-" name
     projectUrl = "https://softwarefactory-project.io/r/" <> projectName
 
-proposeUpdate :: Text -> Text -> FilePath -> IO ()
-proposeUpdate home gerritUser fn = Gerrit.withClient "https://softwarefactory-project.io/r" $ \client -> do
-  print $ "Proposing update using: " <> fn
-  fcontent <- T.readFile (encodeString fn)
-  results <- mapM (updatePackage client home gerritUser . readOutdatedLine) $ T.lines fcontent
-  putDoc (green (text "Summary:\n"))
-  forM_ (filter (isJust . snd) results) $ \(name, message) ->
-    putStrLn $ T.unpack $ name <> ": " <> fromMaybe "N/A" message
+proposeUpdate :: Text -> Text -> Text -> FilePath -> IO ()
+proposeUpdate home gerritUser queueName fn =
+  Gerrit.withClient "https://softwarefactory-project.io/r" $ \clientGerrit ->
+    Zuul.withClient "https://softwarefactory-project.io/zuul/api/tenant/local" $ \clientZuul -> do
+      print $ "Proposing update using: " <> fn
+      go clientGerrit clientZuul
+  where
+    go :: GerritClient -> ZuulClient -> IO ()
+    go clientGerrit clientZuul = do
+      fcontent <- T.readFile (encodeString fn)
+      zuulStatus <- Zuul.getStatus clientZuul
+      results <- mapM (updatePackage (canUpdate zuulStatus) clientGerrit home gerritUser . readOutdatedLine) $ T.lines fcontent
+      putDoc (green (text "Summary:\n"))
+      forM_ (filter (isJust . snd) results) $ \(name, message) ->
+        putStrLn $ T.unpack $ name <> ": " <> fromMaybe "N/A" message
+    canUpdate :: Zuul.Status -> Bool
+    canUpdate = (< 4) . length . fromJust . Zuul.pipelineChanges "gate" (Just queueName)
 
 -- | Convenient bind unless wrapper for the `if "test in IO" then "do this IO" pattern`
 --
