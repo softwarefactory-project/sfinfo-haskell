@@ -13,6 +13,7 @@
             required-projects:
               - software-factory/gerrit-haskell
               - software-factory/podman-haskell
+              - software-factory/zuul-haskell
         - hlint:
             nodeset:
               nodes:

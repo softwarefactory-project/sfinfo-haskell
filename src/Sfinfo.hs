@@ -4,7 +4,9 @@ module Sfinfo
   )
 where
 
-import Control.Monad (forM_, unless, void)
+import Control.Concurrent (threadDelay)
+import Control.Monad (forM_, unless, void, when)
+import Data.Either (lefts, rights)
 import qualified Data.List
 import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust, isNothing, mapMaybe)
 import qualified Data.Text as T
@@ -21,6 +23,9 @@ import SimpleCmd (cmd, cmdMaybe, cmd_)
 import System.Directory (doesDirectoryExist, doesFileExist)
 import Text.PrettyPrint.ANSI.Leijen (green, putDoc, text)
 import Turtle (FilePath, encodeString)
+import Zuul (ZuulClient)
+import qualified Zuul
+import qualified Zuul.Status as Zuul
 import Prelude hiding (FilePath, id)
 
 -- | A breakOn that drops the seprator
@@ -55,40 +60,67 @@ commitUpdate gitDir version =
   where
     commitTitle = "Bump to " <> version
 
-updatePackage :: GerritClient -> Text -> Text -> (Text, Text) -> IO (Text, Maybe Text)
-updatePackage client home gerritUser (name, version) =
+approveChange :: GerritClient -> Gerrit.GerritChange -> IO ()
+approveChange client change =
+  do
+    putStrLn $ T.unpack $ "Approving " <> Gerrit.project change <> " (" <> Gerrit.subject change <> ")"
+    -- TODO: get approver name
+    void $ Gerrit.postReview change "Thanks!" "Workflow" 1 client
+
+queueLength :: Text -> Text -> Zuul.Status -> Int
+queueLength pipelineName queueName = length . fromJust . Zuul.pipelineChanges pipelineName (Just queueName)
+
+getQueueLength :: ZuulClient -> Text -> IO Int
+getQueueLength zuulClient queueName = queueLength "gate" queueName <$> Zuul.getStatus zuulClient
+
+-- | This function returns either an optional (package, message) tuple, either a GerritChange to approve
+updatePackage :: GerritClient -> Text -> Text -> Text -> Text -> IO (Either (Maybe (Text, Text)) Gerrit.GerritChange)
+updatePackage gerritClient gerritUser home packageName packageVersion =
   do
     gitDir <- clone gitBase projectUrl
-    changeId <- commitUpdate gitDir version
-    gerritChanges <- queryGerrit changeId
-    result <- case gerritChanges of
+    print gitDir
+    changeId <- commitUpdate gitDir packageVersion
+    gerritChanges <- queryGerrit changeId gerritClient
+    case gerritChanges of
       [] -> do
         gitReview gerritUser projectName gitDir
-        pure $ Just "review submited"
-      [change@Gerrit.GerritChange {..}] ->
-        if status == Gerrit.MERGED
-          then pure Nothing -- Change is merged, nothing to report
-          else pure $ Just $ changeUrl change
-      -- Is there a +2 ?
-      -- Is the zuul gate sf-master queue length < 2 ?
-      -- Then perhaps add +2/+A
-      _ -> pure $ Just $ T.pack $ "multiple review opened: " <> show (map changeUrl gerritChanges)
-    pure (name, result)
+        infoResult "review submited"
+      [change@Gerrit.GerritChange {..}]
+        | status == Gerrit.MERGED -> skipResult
+        | Gerrit.isApproved change -> tryApprove change
+        | otherwise -> infoResult $ changeUrl change <> " : need Approval"
+      _ -> infoResult $ T.pack $ "multiple review opened: " <> show (map changeUrl gerritChanges)
   where
-    changeUrl = Gerrit.changeUrl client
-    queryGerrit changeId = Gerrit.queryChanges [Gerrit.Project projectName, Gerrit.ChangeId changeId] client
+    tryApprove = pure . Right
+    skipResult = pure $ Left Nothing
+    infoResult txt = pure $ Left (Just (packageName, txt))
+    changeUrl = Gerrit.changeUrl gerritClient
+    queryGerrit changeId = Gerrit.queryChanges [Gerrit.Project projectName, Gerrit.ChangeId changeId]
     gitBase = home <> "/src/"
-    projectName = "rpms/" <> T.replace "python3-" "python-" name
+    projectName = "rpms/" <> T.replace "python3-" "python-" packageName
     projectUrl = "https://softwarefactory-project.io/r/" <> projectName
 
-proposeUpdate :: Text -> Text -> FilePath -> IO ()
-proposeUpdate home gerritUser fn = Gerrit.withClient "https://softwarefactory-project.io/r" $ \client -> do
-  print $ "Proposing update using: " <> fn
-  fcontent <- T.readFile (encodeString fn)
-  results <- mapM (updatePackage client home gerritUser . readOutdatedLine) $ T.lines fcontent
-  putDoc (green (text "Summary:\n"))
-  forM_ (filter (isJust . snd) results) $ \(name, message) ->
-    putStrLn $ T.unpack $ name <> ": " <> fromMaybe "N/A" message
+proposeUpdate :: Text -> Text -> Text -> FilePath -> IO ()
+proposeUpdate home gerritUser queueName fn =
+  Gerrit.withClient "https://softwarefactory-project.io/r" (Just gerritUser) $ \gerritClient ->
+    Zuul.withClient "https://softwarefactory-project.io/zuul/api/tenant/local" $ \zuulClient -> do
+      print $ "Proposing update using: " <> fn
+      go gerritClient zuulClient
+  where
+    go :: GerritClient -> ZuulClient -> IO ()
+    go gerritClient zuulClient = do
+      updateListContent <- T.lines <$> T.readFile (encodeString fn)
+      results <- mapM (uncurry (updatePackage gerritClient gerritUser home) . readOutdatedLine) updateListContent
+      putDoc (green (text "Summary:\n"))
+      let infos = catMaybes $ lefts results
+      let toApprove = rights results
+      forM_ infos $ \(packageName, info) -> putStrLn $ T.unpack $ packageName <> ": " <> info
+      gateLength <- getQueueLength zuulClient queueName
+      if gateLength >= 4
+        then putStrLn "Zuul is too busy atm, try again later"
+        else
+          putDoc (green (text "Approving:\n"))
+            >> mapM_ (approveChange gerritClient) (take (4 - gateLength) toApprove)
 
 -- | Convenient bind unless wrapper for the `if "test in IO" then "do this IO" pattern`
 --
