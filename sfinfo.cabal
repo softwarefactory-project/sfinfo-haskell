@@ -31,6 +31,7 @@ common common-options
                      -- Internal dep
                      , gerrit
                      , podman
+                     , zuul
 
   ghc-options:         -Wall
                        -Wcompat
@@ -52,6 +53,7 @@ common common-options
                      , OverloadedStrings
                      , RecordWildCards
                      , LambdaCase
+                     , NumericUnderscores
   default-language:    Haskell2010
 
 library
