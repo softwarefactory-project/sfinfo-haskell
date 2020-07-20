@@ -33,6 +33,7 @@ python3-CacheControl: 0.12.5-1.el7 -> 0.12.6-1.el7
 Propose distgit update in gerrit:
 
 ```ShellSession
+$ export GERRIT_PASSWORD="XXXX"
 $ sfinfo propose-update outdated-list.txt GerritUserName
 ...
 Cloning into '/home/fedora/src/softwarefactory-project.io/rpms/python-kazoo'...

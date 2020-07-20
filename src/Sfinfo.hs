@@ -59,11 +59,12 @@ commitUpdate gitDir version =
   where
     commitTitle = "Bump to " <> version
 
-approveChange :: Gerrit.GerritChange -> IO ()
-approveChange change =
+approveChange :: Gerrit.GerritChange -> GerritClient -> IO ()
+approveChange change client =
   do
     putStrLn $ T.unpack $ "Approving " <> Gerrit.project change <> " (" <> Gerrit.subject change <> ")"
-    -- TODO: do the actual approval
+    -- TODO: get for approver name
+    void $ Gerrit.postReview change "Thanks!" "Workflow" 1 client
     threadDelay tenSeconds -- Waiting for zuul to pickup the change
   where
     tenSeconds = 10_000_000
@@ -91,10 +92,11 @@ updatePackage clientZuul queueName client home gerritUser (name, version) =
             canApprove <- isZuulAvailable clientZuul queueName
             if canApprove
               then
-                approveChange change
-                  >> pure
-                  $ Just
-                  $ changeUrl change <> " : +Workflow "
+                approveChange change client
+                  >> ( pure
+                         $ Just
+                         $ changeUrl change <> " : +Workflow "
+                     )
               else
                 pure
                   $ Just
@@ -111,7 +113,7 @@ updatePackage clientZuul queueName client home gerritUser (name, version) =
 
 proposeUpdate :: Text -> Text -> Text -> FilePath -> IO ()
 proposeUpdate home gerritUser queueName fn =
-  Gerrit.withClient "https://softwarefactory-project.io/r" $ \clientGerrit ->
+  Gerrit.withClient "https://softwarefactory-project.io/r" (Just gerritUser) $ \clientGerrit ->
     Zuul.withClient "https://softwarefactory-project.io/zuul/api/tenant/local" $ \clientZuul -> do
       print $ "Proposing update using: " <> fn
       go clientGerrit clientZuul
