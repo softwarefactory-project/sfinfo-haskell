@@ -36,4 +36,4 @@ main = do
     ComputeDiff outputFile ->
       comparePipAndRpm outputFile
     ProposeUpdate outdatedList gerritUser ->
-      proposeUpdate (fromMaybe "/home/fedora" home') gerritUser outdatedList
+      proposeUpdate (fromMaybe "/home/fedora" home') gerritUser "sf-master" outdatedList
