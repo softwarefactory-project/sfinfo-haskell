@@ -26,6 +26,9 @@ common common-options
                      , cryptonite
                      , simple-cmd
                      , ansi-wl-pprint
+                     , aeson
+                     , bytestring
+                     , yaml
                      -- Extra dep
                      , pkgtreediff
                      -- Internal dep

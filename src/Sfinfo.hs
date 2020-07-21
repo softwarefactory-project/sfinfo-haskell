@@ -1,19 +1,28 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+
 module Sfinfo
   ( proposeUpdate,
     comparePipAndRpm,
     readPkgTreeDiffOutputFile,
+    readSFInfoFile,
+    getReviewStatus,
   )
 where
 
 import Control.Concurrent (threadDelay)
 import Control.Monad (forM_, unless, void, when)
+import Data.Aeson
+import qualified Data.ByteString
 import Data.Either (lefts, rights)
 import qualified Data.List
 import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust, isNothing, mapMaybe)
 import qualified Data.Text as T
 import Data.Text (Text)
 import qualified Data.Text.IO as T
+import qualified Data.Yaml
 import Distribution.RPM.PackageTreeDiff (Ignore (..), RpmPackage (..), RpmPackageDiff (..), diffPkgs, readRpmPkg, rpmPkgVerRel)
+import GHC.Generics (Generic)
 import Gerrit (GerritClient)
 import qualified Gerrit
 import Podman (containerRunning, containerState, inspectContainer, isContainer)
@@ -28,6 +37,40 @@ import Zuul (ZuulClient)
 import qualified Zuul
 import qualified Zuul.Status as Zuul
 import Prelude hiding (FilePath, id)
+
+data SFInfoPackage
+  = SFInfoPackage
+      { name :: Text,
+        source :: Text,
+        spec :: Maybe Text
+      }
+  deriving (Show, Generic, FromJSON)
+
+data SFInfo
+  = SFInfo
+      { branch :: Text,
+        packages :: [SFInfoPackage]
+      }
+  deriving (Show, Generic, FromJSON)
+
+getReviewStatus :: GerritClient -> SFInfo -> IO ()
+getReviewStatus gerritClient sfinfo = mapM_ go (packages sfinfo)
+  where
+    go :: SFInfoPackage -> IO ()
+    go SFInfoPackage {..} = do
+      gerritChanges <- Gerrit.queryChanges [Gerrit.Project name, Gerrit.Status Gerrit.NEW] gerritClient
+      unless (null gerritChanges) $ putStrLn $ T.unpack $ name <> ": " <> changeUrls gerritChanges
+    changeUrls :: [Gerrit.GerritChange] -> Text
+    changeUrls changes = T.unwords $ map changeUrl changes
+    changeUrl :: Gerrit.GerritChange -> Text
+    changeUrl = Gerrit.changeUrl gerritClient
+
+readSFInfoFile :: FilePath -> IO SFInfo
+readSFInfoFile fn = do
+  fContent <- Data.ByteString.readFile (encodeString fn)
+  case Data.Yaml.decodeEither' fContent of
+    Right fObj -> pure fObj
+    Left err -> error $ "Invalid sfinfo file: " <> encodeString fn <> " " <> show err
 
 -- | A breakOn that drops the seprator
 -- >>> breakOn' " -> " "a -> b"
