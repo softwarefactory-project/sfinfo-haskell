@@ -8,13 +8,28 @@ import Sfinfo (comparePipAndRpm, proposeUpdate)
 import Turtle ((<|>), FilePath, Parser, argPath, argText, need, options, subcommand)
 import Prelude hiding (FilePath)
 
-data Command = GetReviewStatus FilePath | ComputeDiff FilePath | ProposeUpdate FilePath Text
+data Command
+  = PackageWithoutReview FilePath
+  | GetReviewStatus FilePath
+  | ComputeDiff FilePath
+  | ProposeUpdate FilePath Text
   deriving (Show)
 
 -- See https://hackage.haskell.org/package/turtle-1.5.18/docs/Turtle-Options.html
 usage :: Parser Command
-usage = computeDiffUsage <|> proposeUpdateUsage <|> getReviewStatusUsage
+usage =
+  computeDiffUsage
+    <|> proposeUpdateUsage
+    <|> getReviewStatusUsage
+    <|> getPackageWithoutReview
   where
+    getPackageWithoutReview =
+      subcommand
+        "get-package-without-review"
+        "Display the list of packages without review"
+        ( PackageWithoutReview
+            <$> argPath "sfinfo-file" "The sfinfo file"
+        )
     getReviewStatusUsage =
       subcommand
         "get-review-status"
@@ -39,15 +54,19 @@ usage = computeDiffUsage <|> proposeUpdateUsage <|> getReviewStatusUsage
         )
 
 main :: IO ()
-main = do
-  command <- options "SFInfo toolkit" usage
-  home' <- need "HOME"
-  case command of
-    GetReviewStatus sfinfoFile -> do
-      sfInfo <- Sfinfo.readSFInfoFile sfinfoFile
+main =
+  do
+    command <- options "SFInfo toolkit" usage
+    home' <- need "HOME"
+    case command of
+      PackageWithoutReview sfinfoFile -> sfinfoProcess sfinfoFile Sfinfo.printPackagesWithoutOpenReview
+      GetReviewStatus sfinfoFile -> sfinfoProcess sfinfoFile Sfinfo.getReviewStatus
+      ComputeDiff outputFile ->
+        comparePipAndRpm outputFile
+      ProposeUpdate outdatedList gerritUser ->
+        proposeUpdate (fromMaybe "/home/fedora" home') gerritUser "sf-master" outdatedList
+  where
+    sfinfoProcess sfinfo fun = do
+      sfInfo <- Sfinfo.readSFInfoFile sfinfo
       Gerrit.withClient "https://softwarefactory-project.io/r/" Nothing $ \gerritClient ->
-        Sfinfo.getReviewStatus gerritClient sfInfo
-    ComputeDiff outputFile ->
-      comparePipAndRpm outputFile
-    ProposeUpdate outdatedList gerritUser ->
-      proposeUpdate (fromMaybe "/home/fedora" home') gerritUser "sf-master" outdatedList
+        fun gerritClient sfInfo

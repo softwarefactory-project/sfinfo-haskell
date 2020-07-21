@@ -7,6 +7,7 @@ module Sfinfo
     readPkgTreeDiffOutputFile,
     readSFInfoFile,
     getReviewStatus,
+    printPackagesWithoutOpenReview,
   )
 where
 
@@ -25,6 +26,7 @@ import Distribution.RPM.PackageTreeDiff (Ignore (..), RpmPackage (..), RpmPackag
 import GHC.Generics (Generic)
 import Gerrit (GerritClient)
 import qualified Gerrit
+import Gerrit.Data (GerritChange)
 import Podman (containerRunning, containerState, inspectContainer, isContainer)
 import Sfinfo.Cloner (clone, commit, gitReview, mkChangeId, reset, urlToGitDir)
 import Sfinfo.PipNames (ignoreList, pipList)
@@ -53,13 +55,37 @@ data SFInfo
       }
   deriving (Show, Generic, FromJSON)
 
-getReviewStatus :: GerritClient -> SFInfo -> IO ()
-getReviewStatus gerritClient sfinfo = mapM_ go (packages sfinfo)
+getOpenReviews :: GerritClient -> [SFInfoPackage] -> IO [Maybe [GerritChange]]
+getOpenReviews gerritClient = mapM go
   where
-    go :: SFInfoPackage -> IO ()
+    go :: SFInfoPackage -> IO (Maybe [GerritChange])
     go SFInfoPackage {..} = do
       gerritChanges <- Gerrit.queryChanges [Gerrit.Project name, Gerrit.Status Gerrit.NEW] gerritClient
-      unless (null gerritChanges) $ putStrLn $ T.unpack $ name <> ": " <> changeUrls gerritChanges
+      pure $ case gerritChanges of
+        [] -> Nothing
+        xs -> Just xs
+
+getPackagesWithoutOpenReviews :: GerritClient -> [SFInfoPackage] -> IO [SFInfoPackage]
+getPackagesWithoutOpenReviews gerritClient packages = do
+  openReviews <- getOpenReviews gerritClient packages
+  pure $ map fst $ filter (\(_, reviews) -> isNothing reviews) (zip packages openReviews)
+
+printPackagesWithoutOpenReview :: GerritClient -> SFInfo -> IO ()
+printPackagesWithoutOpenReview gerritClient sfinfo =
+  do
+    packagesWithoutOpenReview <- getPackagesWithoutOpenReviews gerritClient (packages sfinfo)
+    forM_ packagesWithoutOpenReview (putStrLn . T.unpack . name)
+
+getReviewStatus :: GerritClient -> SFInfo -> IO ()
+getReviewStatus gerritClient sfinfo =
+  do
+    openReviews <- getOpenReviews gerritClient packagesList
+    mapM_ go (zip packagesList openReviews)
+  where
+    packagesList = packages sfinfo
+    go :: (SFInfoPackage, Maybe [GerritChange]) -> IO ()
+    go (SFInfoPackage {..}, Just gerritChanges) = putStrLn $ T.unpack $ name <> ": " <> changeUrls gerritChanges
+    go _ = pure ()
     changeUrls :: [Gerrit.GerritChange] -> Text
     changeUrls changes = T.unwords $ map changeUrl changes
     changeUrl :: Gerrit.GerritChange -> Text
