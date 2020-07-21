@@ -1,0 +1,13 @@
+# The main sf resources
+resources:
+  repos:
+    software-factory/distro-jobs:
+      acl: sf-acl
+      description: a collection of jobs to build and publish package.
+    # Keep this legacy until review are closed/migrated
+    rpms/zuul:
+      branches:
+        '3.5': master
+        '3.4': master
+      acl: sf-acl
+      description: The zuul packages
