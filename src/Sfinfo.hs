@@ -8,6 +8,7 @@ module Sfinfo
     readSFInfoFile,
     getReviewStatus,
     printPackagesWithoutOpenReview,
+    proposeExecutorAnsibleUpdate,
   )
 where
 
@@ -22,6 +23,7 @@ import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust, isNothing, mapMaybe)
 import qualified Data.Text as T
 import Data.Text (Text)
 import qualified Data.Text.IO as T
+import qualified Data.Versions as V
 import qualified Data.Yaml
 import Distribution.RPM.PackageTreeDiff (Ignore (..), RpmPackage (..), RpmPackageDiff (..), diffPkgs, readRpmPkg, rpmPkgVerRel)
 import GHC.Generics (Generic)
@@ -29,6 +31,8 @@ import Gerrit (GerritClient)
 import qualified Gerrit
 import Gerrit.Data (GerritChange)
 import Podman (containerRunning, containerState, inspectContainer, isContainer)
+import qualified Pypi
+import qualified Sfinfo.Cloner
 import Sfinfo.Cloner (clone, commit, gitReview, mkChangeId, reset, urlToGitDir)
 import Sfinfo.PipNames (ignoreList, pipList)
 import Sfinfo.RpmSpec (bumpVersion, getDate, getSpec)
@@ -55,6 +59,43 @@ data SFInfo
         packages :: [SFInfoPackage]
       }
   deriving (Show, Generic, FromJSON)
+
+proposeExecutorAnsibleUpdate :: Text -> Text -> FilePath -> IO ()
+proposeExecutorAnsibleUpdate home gerritUser sfinfoFile =
+  Gerrit.withClient "https://softwarefactory-project.io/r" (Just gerritUser) $ \gerritClient ->
+    Pypi.withClient (go gerritClient)
+  where
+    go :: GerritClient -> Pypi.PypiClient -> IO ()
+    go gerritClient client = do
+      ansible <- Pypi.getProject "ansible" client
+      executorAnsibleProjectName <- getExecutorAnsible sfinfoFile
+      let ansibleNeededVersion = map majorMinor executorAnsibleProjectName
+      let ansibleAvailableVersion = reverse $ Data.List.sort $ Pypi.getReleaseSemVer ansible
+      let latestAnsibleVersion = map (latestAnsiblePatch ansibleAvailableVersion) ansibleNeededVersion
+      let latestAnsibleVersionText = map V.prettySemVer latestAnsibleVersion
+      let packageVersion = zip executorAnsibleProjectName latestAnsibleVersionText
+      print $ "Submitting: " <> show packageVersion
+      packageUpdate <- mapM (uncurry $ updatePackage gerritClient gerritUser home) packageVersion
+      print packageUpdate
+    -- From a sfinfo file, returns the list of zuul-executor-ansible project name
+    getExecutorAnsible :: FilePath -> IO [Text]
+    getExecutorAnsible _sfinfoFile = pure ["zuul-executor-ansible-28", "zuul-executor-ansible-29"]
+    -- From a zuul-executor-ansible project name, returns the (Major, Minor) tuple
+    majorMinor :: Text -> (Int, Int)
+    majorMinor "zuul-executor-ansible-27" = (2, 7)
+    majorMinor "zuul-executor-ansible-28" = (2, 8)
+    majorMinor "zuul-executor-ansible-29" = (2, 9)
+    majorMinor _ = error "Implement this function..."
+    -- From the list of ansible semver, find the latest version of a (Major, Minor) tuple
+    latestAnsiblePatch :: [V.SemVer] -> (Int, Int) -> V.SemVer
+    latestAnsiblePatch [] mm = error $ "Couldn't find version for: " <> show mm
+    latestAnsiblePatch (x : xs) mm@(major, minor)
+      | major == getMajor x && minor == getMinor x = x
+      | otherwise = latestAnsiblePatch xs mm
+    getMinor :: V.SemVer -> Int
+    getMinor = fromIntegral . V._svMinor
+    getMajor :: V.SemVer -> Int
+    getMajor = fromIntegral . V._svMajor
 
 getOpenReviews :: GerritClient -> [SFInfoPackage] -> IO [Maybe [GerritChange]]
 getOpenReviews gerritClient = mapM go
@@ -164,8 +205,12 @@ updatePackage gerritClient gerritUser home packageName packageVersion =
     proposeReview = do
       void $ clone gitBase projectUrl
       commitUpdate gitDir changeId packageVersion commitTitle
-      gitReview gerritUser project' gitDir
-      infoResult "review submitted"
+      clean <- Sfinfo.Cloner.isClean gitDir "master"
+      if clean
+        then infoResult "change already merged with different changeId"
+        else do
+          gitReview gerritUser project' gitDir
+          infoResult "review submitted"
     addWorkflow = pure . Right
     skipResult = pure $ Left Nothing
     infoResult txt = pure $ Left (Just (packageName, txt))
