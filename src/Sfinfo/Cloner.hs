@@ -6,6 +6,7 @@ module Sfinfo.Cloner
     reset,
     mkChangeId,
     urlToGitDir,
+    isClean,
   )
 where
 
@@ -37,6 +38,15 @@ reset gitDir ref = do
   git gitDir ["clean", "-x", "-f", "-d"]
   git gitDir ["fetch", "origin"]
   git gitDir ["reset", "--hard", ref]
+
+isClean :: MonadIO io => Text -> Text -> io Bool
+isClean gitDir branch = do
+  exitCode <- Turtle.proc "/bin/git" (["-C", gitDir] <> gitArgs) mempty
+  pure $ case exitCode of
+    ExitSuccess -> True
+    _ -> False
+  where
+    gitArgs = ["diff", "--exit-code", "HEAD..origin/" <> branch]
 
 commit :: MonadIO io => Text -> Text -> Text -> io ()
 commit gitDir commitMessage changeId = git gitDir gitArgs

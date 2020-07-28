@@ -31,12 +31,14 @@ common common-options
                      , containers
                      , yaml
                      , HsYAML
+                     , versions
                      -- Extra dep
                      , pkgtreediff
                      -- Internal dep
                      , gerrit
                      , podman
                      , zuul
+                     , pypi
 
   ghc-options:         -Wall
                        -Wcompat

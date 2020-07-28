@@ -1,0 +1,2 @@
+# It's not obvious what `sortOn Data.Ord.Down` does compare to `reverse $ Data.List.sort`
+- ignore: {name: "Avoid reverse"}
