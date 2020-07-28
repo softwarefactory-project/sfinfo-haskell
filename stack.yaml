@@ -5,3 +5,4 @@ extra-deps:
   - ../gerrit-haskell
   - ../podman-haskell
   - ../zuul-haskell
+  - ../pypi-haskell

@@ -8,6 +8,7 @@ module Sfinfo
     readSFInfoFile,
     getReviewStatus,
     printPackagesWithoutOpenReview,
+    proposeExecutorAnsibleUpdate,
   )
 where
 
@@ -18,10 +19,12 @@ import qualified Data.ByteString
 import qualified Data.ByteString.Lazy as BSL
 import Data.Either (lefts, rights)
 import qualified Data.List
+import qualified Data.Map as M
 import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust, isNothing, mapMaybe)
 import qualified Data.Text as T
 import Data.Text (Text)
 import qualified Data.Text.IO as T
+import qualified Data.Versions as V
 import qualified Data.Yaml
 import Distribution.RPM.PackageTreeDiff (Ignore (..), RpmPackage (..), RpmPackageDiff (..), diffPkgs, readRpmPkg, rpmPkgVerRel)
 import GHC.Generics (Generic)
@@ -29,7 +32,10 @@ import Gerrit (GerritClient)
 import qualified Gerrit
 import Gerrit.Data (GerritChange)
 import Podman (containerRunning, containerState, inspectContainer, isContainer)
+import qualified Pypi
+import qualified Sfinfo.Cloner
 import Sfinfo.Cloner (clone, commit, gitReview, mkChangeId, reset, urlToGitDir)
+import qualified Sfinfo.Data
 import Sfinfo.PipNames (ignoreList, pipList)
 import Sfinfo.RpmSpec (bumpVersion, getDate, getSpec)
 import SimpleCmd (cmd, cmdMaybe, cmd_)
@@ -55,6 +61,55 @@ data SFInfo
         packages :: [SFInfoPackage]
       }
   deriving (Show, Generic, FromJSON)
+
+-- From a sfinfo file, returns the list of zuul-executor-ansible project name
+getExecutorAnsible :: FilePath -> IO [Text]
+getExecutorAnsible sfinfoFile =
+  do
+    resources <- Data.Yaml.decodeEither' <$> Data.ByteString.readFile (encodeString sfinfoFile)
+    case resources of
+      Right res -> pure $ removeRpms $ filterExec $ M.keys $ Sfinfo.Data.repos $ Sfinfo.Data.resources res
+      Left err -> error $ "Couldn't decode " <> encodeString sfinfoFile <> ": " <> show err
+  where
+    removeRpms = map (T.replace "rpms/" "")
+    filterExec = filter (T.isPrefixOf "rpms/zuul-executor-ansible-")
+
+proposeExecutorAnsibleUpdate :: Text -> Text -> FilePath -> IO ()
+proposeExecutorAnsibleUpdate home gerritUser sfinfoFile =
+  Gerrit.withClient "https://softwarefactory-project.io/r" (Just gerritUser) $ \gerritClient ->
+    Pypi.withClient (go gerritClient)
+  where
+    go :: GerritClient -> Pypi.PypiClient -> IO ()
+    go gerritClient client = do
+      executorAnsibleProjectName <- getExecutorAnsible sfinfoFile
+      when (null executorAnsibleProjectName) $ error "No zuul-executor-ansible project found"
+      ansible <- Pypi.getProject "ansible" client
+      let ansibleNeededVersion = map majorMinor executorAnsibleProjectName
+      let ansibleAvailableVersion = reverse $ Data.List.sort $ Pypi.getReleaseSemVer ansible
+      let latestAnsibleVersion = map (latestAnsiblePatch ansibleAvailableVersion) ansibleNeededVersion
+      let latestAnsibleVersionText = map V.prettySemVer latestAnsibleVersion
+      let packageVersion = zip executorAnsibleProjectName latestAnsibleVersionText
+      print $ "Submitting: " <> show packageVersion
+      packageUpdate <- mapM (uncurry $ updatePackage gerritClient gerritUser home) packageVersion
+      print packageUpdate
+    -- >>> majorMinor "zuul-executor-ansible-210"
+    -- (2,10)
+    majorMinor :: Text -> (Int, Int)
+    majorMinor = readTuple . T.unpack . last . T.splitOn "-"
+      where
+        readTuple (x : xs) = (read [x], read xs)
+        readTuple x = error $ "Invalid version number: " <> show x
+    -- Given the list of ansible semver, find the latest version of a (Major, Minor) tuple
+    latestAnsiblePatch :: [V.SemVer] -> (Int, Int) -> V.SemVer
+    latestAnsiblePatch [] mm = error $ "Couldn't find version for: " <> show mm
+    latestAnsiblePatch (x : xs) mm@(major, minor)
+      | major == getMajor x && minor == getMinor x = x
+      | otherwise = latestAnsiblePatch xs mm
+      where
+        getMinor :: V.SemVer -> Int
+        getMinor = fromIntegral . V._svMinor
+        getMajor :: V.SemVer -> Int
+        getMajor = fromIntegral . V._svMajor
 
 getOpenReviews :: GerritClient -> [SFInfoPackage] -> IO [Maybe [GerritChange]]
 getOpenReviews gerritClient = mapM go
@@ -164,8 +219,12 @@ updatePackage gerritClient gerritUser home packageName packageVersion =
     proposeReview = do
       void $ clone gitBase projectUrl
       commitUpdate gitDir changeId packageVersion commitTitle
-      gitReview gerritUser project' gitDir
-      infoResult "review submitted"
+      clean <- Sfinfo.Cloner.isClean gitDir "master"
+      if clean
+        then infoResult $ "version already merged (with different changeId): " <> packageVersion
+        else do
+          gitReview gerritUser project' gitDir
+          infoResult "review submitted"
     addWorkflow = pure . Right
     skipResult = pure $ Left Nothing
     infoResult txt = pure $ Left (Just (packageName, txt))

@@ -4,6 +4,8 @@
 -- |
 module Sfinfo.Data
   ( SFRepo (..),
+    SFResources (..),
+    SFResourcesRoot (..),
     addBranch,
   )
 where
@@ -18,6 +20,26 @@ data SFRepo
       { acl :: Text,
         description :: Text,
         branches :: Maybe (M.Map Text Text)
+      }
+  deriving (Show, Generic, FromJSON)
+
+data SFProject
+  = SFProject
+      { tenant :: Text,
+        contacts :: [Text]
+      }
+  deriving (Show, Generic, FromJSON)
+
+data SFResources
+  = SFResources
+      { repos :: M.Map Text SFRepo,
+        projects :: M.Map Text SFProject
+      }
+  deriving (Show, Generic, FromJSON)
+
+newtype SFResourcesRoot
+  = SFResourcesRoot
+      { resources :: SFResources
       }
   deriving (Show, Generic, FromJSON)
 
