@@ -201,7 +201,7 @@ projectName :: Text -> Text
 projectName packageName = "rpms/" <> T.replace "python3-" "python-" packageName
 
 -- | This function returns either an optional (package, message) tuple, either a GerritChange to approve
-updatePackage :: GerritClient -> Text -> Text -> Text -> Text -> IO (Either (Maybe (Text, Text)) Gerrit.GerritChange)
+updatePackage :: GerritClient -> Text -> Text -> Text -> Text -> IO (Either (Maybe Text) Gerrit.GerritChange)
 updatePackage gerritClient gerritUser home packageName packageVersion =
   do
     gerritChanges <- Gerrit.queryChanges [Gerrit.Project project', Gerrit.ChangeId changeId] gerritClient
@@ -227,7 +227,7 @@ updatePackage gerritClient gerritUser home packageName packageVersion =
           infoResult "review submitted"
     addWorkflow = pure . Right
     skipResult = pure $ Left Nothing
-    infoResult txt = pure $ Left (Just (packageName, txt))
+    infoResult txt = pure $ Left (Just txt)
     project' = projectName packageName
     changeUrl = Gerrit.changeUrl gerritClient
     gitBase = home <> "/src/"
@@ -243,15 +243,18 @@ proposeUpdate home gerritUser zuulQueueName pkgtreediffFile =
     Zuul.withClient "https://softwarefactory-project.io/zuul/api/tenant/local" $ \zuulClient ->
       go gerritClient zuulClient
   where
+    biRightLefts x = [(a, b) | (a, Left b) <- x]
+    biRightJusts x = [(a, b) | (a, Just b) <- x]
+    getInfos = biRightJusts . biRightLefts
     maxGateLength = 4
     getUpdates gerritClient = mapM (uncurry (updatePackage gerritClient gerritUser home))
     go :: GerritClient -> ZuulClient -> IO ()
     go gerritClient zuulClient = do
       pkgsVers <- readPkgTreeDiffOutputFile pkgtreediffFile
       results <- getUpdates gerritClient pkgsVers
-      let infos = catMaybes $ lefts results
+      let infos = getInfos (zip pkgsVers results)
       let toApprove = rights results
-      forM_ infos $ \(packageName, info) -> putStrLn $ T.unpack $ packageName <> ": " <> info
+      forM_ infos $ \((packageName, _ver), info) -> putStrLn $ T.unpack $ packageName <> ": " <> info
       gateLength <- getQueueLength zuulClient zuulQueueName
       if gateLength >= maxGateLength
         then putStrLn "Zuul is too busy atm, try again later"
