@@ -3,9 +3,9 @@
 Install sfinfo:
 
 ```ShellSession
-$ sudo dnf copr enable -y petersen/stack2 && sudo dnf install -y stack && sudo stack upgrade
+$ sudo dnf install -y cabal-install ghc
 $ for dep in gerrit podman zuul; do git clone https://softwarefactory-project.io/r/software-factory/${dep}-haskell ../${dep}-haskell; done
-$ stack install sfinfo
+$ cabal install exe:sfinfo
 $ sfinfo --help
 SFInfo toolkit
 

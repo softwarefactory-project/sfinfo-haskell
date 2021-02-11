@@ -1,15 +1,13 @@
 - project:
     check: &jobs
       jobs:
-        - linters
-        - haskell-stack-test:
+        - cabal-test:
             vars:
-              lts_version: lts-16.5
-              haskell_stack_target: sfinfo
+              ghc_version: 8.8
             nodeset:
               nodes:
                 - name: container
-                  label: pod-haskell-lts-16
+                  label: zuul-worker-haskell
             required-projects:
               - software-factory/gerrit-haskell
               - software-factory/podman-haskell
