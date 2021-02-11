@@ -1,0 +1,11 @@
+source-repository-package
+  type: git
+  location: git://github.com/juhp/pkgtreediff.git
+  tag: 356a4f192e73f7fbd59af28f0665d3a48fe72fdf
+
+source-repository-package
+  type: git
+  location: git://github.com/juhp/koji-hs.git
+  tag: 6adbdae7032e60a846d36556e2ac80e6aae9de1a
+
+packages: ./ ../gerrit-haskell ../podman-haskell ../zuul-haskell ../pypi-haskell

@@ -22,8 +22,8 @@ import Data.Either (lefts, rights)
 import qualified Data.List
 import qualified Data.Map as M
 import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust, isNothing, mapMaybe)
-import qualified Data.Text as T
 import Data.Text (Text)
+import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Versions as V
 import qualified Data.Yaml
@@ -34,8 +34,8 @@ import qualified Gerrit
 import Gerrit.Data (GerritChange)
 import Podman (containerRunning, containerState, inspectContainer, isContainer)
 import qualified Pypi
-import qualified Sfinfo.Cloner
 import Sfinfo.Cloner (clone, commit, gitReview, mkChangeId, reset, urlToGitDir)
+import qualified Sfinfo.Cloner
 import qualified Sfinfo.Data
 import Sfinfo.PipNames (ignoreList, pipList)
 import Sfinfo.RpmSpec (bumpVersion, getDate, getSpec)
@@ -48,19 +48,17 @@ import qualified Zuul
 import qualified Zuul.Status as Zuul
 import Prelude hiding (FilePath, id)
 
-data SFInfoPackage
-  = SFInfoPackage
-      { name :: Text,
-        source :: Text,
-        spec :: Maybe Text
-      }
+data SFInfoPackage = SFInfoPackage
+  { name :: Text,
+    source :: Text,
+    spec :: Maybe Text
+  }
   deriving (Show, Generic, FromJSON)
 
-data SFInfo
-  = SFInfo
-      { branch :: Text,
-        packages :: [SFInfoPackage]
-      }
+data SFInfo = SFInfo
+  { branch :: Text,
+    packages :: [SFInfoPackage]
+  }
   deriving (Show, Generic, FromJSON)
 
 -- From a sfinfo file, returns the list of zuul-executor-ansible project name
@@ -319,7 +317,7 @@ getRpmList =
     isSfReleaseInstalled "master" `bunless` run_ ["yum", "install", "-y", masterRpm]
     ensure "zuul" ["zuul-merger", "zuul-web", "zuul-executor", "zuul-scheduler", "python3-virtualenv"]
     ensure "nodepool" ["nodepool-launcher", "nodepool-builder"]
-    Data.List.sort . lines <$> run ["rpm", "-qa"]
+    Data.List.sort . filter (not . Data.List.isPrefixOf "gpg-pubkey-") . lines <$> run ["rpm", "-qa"]
   where
     isSfReleaseInstalled release = (== release) . fromMaybe "" <$> runMaybe ["cat", "/etc/sf-release"]
     isRunning name = containerRunning . containerState . fromJust <$> inspectContainer name
@@ -366,6 +364,7 @@ comparePipAndRpm outputFile =
     dropArch :: RpmPackage -> RpmPackage
     dropArch (RpmPkg n vr _) = RpmPkg n vr Nothing
     cacheAndGet :: String -> IO [String] -> IO [String]
-    cacheAndGet fn action = doesFileExist fn >>= \case
-      True -> (lines <$> readFile fn)
-      False -> action >>= \content -> writeFile fn (unlines content) >> return content
+    cacheAndGet fn action =
+      doesFileExist fn >>= \case
+        True -> (lines <$> readFile fn)
+        False -> action >>= \content -> writeFile fn (unlines content) >> return content

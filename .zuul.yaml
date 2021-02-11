@@ -1,15 +1,14 @@
 - project:
     check: &jobs
       jobs:
-        - linters
-        - haskell-stack-test:
+        - cabal-test:
             vars:
-              lts_version: lts-16.5
-              haskell_stack_target: sfinfo
+              ghc_version: 8.8
+              cabal_target: "--write-ghc-environment-files=always"
             nodeset:
               nodes:
                 - name: container
-                  label: pod-haskell-lts-16
+                  label: zuul-worker-haskell
             required-projects:
               - software-factory/gerrit-haskell
               - software-factory/podman-haskell
@@ -19,5 +18,5 @@
             nodeset:
               nodes:
                 - name: container
-                  label: pod-haskell-f32
+                  label: zuul-worker-haskell
     gate: *jobs
