@@ -15,6 +15,7 @@ where
 import Control.Concurrent (threadDelay)
 import Control.Monad (forM_, unless, void, when)
 import Data.Aeson
+import Data.Bifunctor (bimap)
 import qualified Data.ByteString
 import qualified Data.ByteString.Lazy as BSL
 import Data.Either (lefts, rights)
@@ -339,13 +340,25 @@ comparePipAndRpm outputFile =
     rpmVer <- cacheAndGet "rpm.txt" getRpmList
     let pipVerAsRpm = Data.List.sort $ mapMaybe convertPipFreezeToRpmQa pipVer
     writeFile "pipRpm.txt" (unlines pipVerAsRpm)
-    writeFile (encodeString outputFile) (unlines $ runDiff rpmVer pipVerAsRpm)
+    let diff = runDiff rpmVer pipVerAsRpm
+    writeFile (encodeString outputFile) (unlines $ rights diff)
+    -- show missing packages
+    putStrLn (unlines $ lefts diff)
   where
-    runDiff :: [String] -> [String] -> [String]
-    runDiff rpms pips = map T.unpack $ mapMaybe createDiffString $ diffPkgs IgnoreRelease (map mkPkgs rpms) (map mkPkgs pips)
-    createDiffString :: RpmPackageDiff -> Maybe Text
-    createDiffString (PkgUpdate rpm pip) = Just $ rpmName rpm <> ": " <> rpmPkgVerRel rpm <> " -> " <> rpmPkgVerRel pip
-    createDiffString _ = Nothing
+    runDiff :: [String] -> [String] -> [Either String String]
+    runDiff rpms pips =
+      mapMaybe createDiffString $
+        diffPkgs IgnoreRelease (map mkPkgs rpms) (map mkPkgs pips)
+    createDiffString :: RpmPackageDiff -> Maybe (Either String String)
+    createDiffString (PkgUpdate rpm pip) =
+      Just $ Right $ T.unpack $ rpmName rpm <> ": " <> rpmPkgVerRel rpm <> " -> " <> rpmPkgVerRel pip
+    createDiffString (PkgAdd pkg) =
+      Just $ Left $ T.unpack $ "New: " <> rpmName pkg <> "-" <> rpmPkgVerRel pkg
+    createDiffString (PkgDel pkg) =
+      if T.isPrefixOf "python" (rpmName pkg)
+        then Just $ Left $ T.unpack $ "Removed: " <> rpmName pkg <> "-" <> rpmPkgVerRel pkg
+        else Nothing
+    createDiffString (PkgArch _ _) = Nothing
     mkPkgs :: String -> RpmPackage
     mkPkgs = dropArch . readRpmPkg . T.pack
     dropArch :: RpmPackage -> RpmPackage
