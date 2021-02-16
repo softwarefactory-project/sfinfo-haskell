@@ -291,7 +291,7 @@ getPipList =
     doesDirectoryExist "venv" `bunless` cmd_ "python3" ["-m", "venv", "venv"]
     doesFileExist "/usr/include/re2/re2.h" `bunless` cmd_ "sudo" ["dnf", "install", "-y", "re2-devel"]
     mapM_ ensure ["zuul", "nodepool", "ansible"]
-    lines <$> cmd "./venv/bin/pip3" ["freeze"]
+    lines <$> cmd "./venv/bin/pip3" ["freeze", "--all"]
   where
     ensure name = doesFileExist ("venv/bin/" <> name) `bunless` cmd_ "./venv/bin/pip3" ["install", name]
 
