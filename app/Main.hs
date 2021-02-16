@@ -3,9 +3,9 @@ module Main (main) where
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Gerrit
+import Sfinfo (comparePipAndRpm, proposeExecutorAnsibleUpdate, proposeUpdate)
 import qualified Sfinfo
-import Sfinfo (comparePipAndRpm, proposeUpdate, proposeExecutorAnsibleUpdate)
-import Turtle ((<|>), FilePath, Parser, argPath, argText, need, options, subcommand)
+import Turtle (FilePath, Parser, argPath, argText, need, options, subcommand, (<|>))
 import Prelude hiding (FilePath)
 
 data Command
@@ -45,7 +45,7 @@ usage =
         "Generate git reviews to bump outdated packages"
         ( ProposeUpdate
             <$> argPath "outdated-list" "gen-diff output file name"
-            <*> argText "gerrit-user" "Gerrit ssh name user to push review"
+            <*> argText "gerrit-user" "Gerrit ssh name user to push review (and set GERRIT_PASSWORD environment variable for approval)"
         )
     computeDiffUsage =
       subcommand
