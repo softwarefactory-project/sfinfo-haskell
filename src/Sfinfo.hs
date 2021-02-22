@@ -9,6 +9,7 @@ module Sfinfo
     getReviewStatus,
     printPackagesWithoutOpenReview,
     proposeExecutorAnsibleUpdate,
+    approveReview,
   )
 where
 
@@ -41,7 +42,8 @@ import Sfinfo.PipNames (ignoreList, pipList)
 import Sfinfo.RpmSpec (bumpVersion, getDate, getSpec)
 import SimpleCmd (cmd, cmdMaybe, cmd_)
 import System.Directory (doesDirectoryExist, doesFileExist)
-import Text.PrettyPrint.ANSI.Leijen (green, putDoc, text)
+import Text.PrettyPrint.ANSI.Leijen (green, putDoc, red, text, yellow)
+import Text.Read (readMaybe)
 import Turtle (FilePath, encodeString)
 import Zuul (ZuulClient)
 import qualified Zuul
@@ -260,6 +262,62 @@ proposeUpdate home gerritUser zuulQueueName pkgtreediffFile =
         else
           putDoc (green (text "Approving:\n"))
             >> mapM_ (approveChange gerritClient) (take (maxGateLength - gateLength) toApprove)
+
+-- | A CLI helper function to approve reviews
+approveReview :: Text -> FilePath -> IO ()
+approveReview gerritUser reviewListFile =
+  Gerrit.withClient "https://softwarefactory-project.io/r" (Just gerritUser) $ \gerritClient ->
+    Zuul.withClient "https://softwarefactory-project.io/zuul/api/tenant/local" $ \zuulClient ->
+      go gerritClient zuulClient
+  where
+    queueName = "sf-master"
+    maxGateLength = 4
+    go :: GerritClient -> ZuulClient -> IO ()
+    go gerritClient zuulClient = do
+      reviews <- Data.List.nub . T.lines <$> T.readFile (encodeString reviewListFile)
+      gateLength <- getQueueLength zuulClient queueName
+      if gateLength >= maxGateLength
+        then putStrLn "Zuul is too busy atm, try again later"
+        else go' (maxGateLength - gateLength) reviews
+      where
+        go' :: Int -> [Text] -> IO ()
+        go' 0 _ = putStrLn "Zuul is now too busy, try again later"
+        go' _ [] = putStrLn "All good!"
+        go' n (x : xs) = do
+          inf <- reviewInfo gerritClient x
+          case inf of
+            PreApproved change -> approveChange gerritClient change >> go' (n - 1) xs
+            CIFailure -> putDoc (red $ text $ T.unpack x <> " need update\n") >> go' n xs
+            Gating -> putDoc (green $ text $ T.unpack x <> " Already in the gate!\n") >> go' n xs
+            NeedReview -> putDoc (yellow $ text $ T.unpack x <> " need review\n") >> go' n xs
+
+data ChangeStatus
+  = -- | CR +1/+2 exists, no failures
+    PreApproved Gerrit.GerritChange
+  | -- | Verify -1/-2 exists
+    CIFailure
+  | -- | CR +1/+2, W +1, no failures
+    Gating
+  | NeedReview
+  deriving (Show)
+
+reviewInfo :: GerritClient -> Text -> IO ChangeStatus
+reviewInfo gerritClient review = do
+  changem <- Gerrit.getChange reviewNumber gerritClient
+  pure $ case changem of
+    Nothing -> CIFailure
+    Just change
+      | Gerrit.hasLabel "Verified" (-1) change -> CIFailure
+      | Gerrit.hasLabel "Verified" (-2) change -> CIFailure
+      | Gerrit.hasLabel "Workflow" 1 change -> Gating
+      | Gerrit.hasLabel "Code-Review" 1 change -> PreApproved change
+      | Gerrit.hasLabel "Code-Review" 2 change -> PreApproved change
+      | otherwise -> NeedReview
+  where
+    reviewNumber =
+      fromMaybe
+        (error $ "Invalid review: " <> T.unpack review)
+        (readMaybe (T.unpack $ last $ T.splitOn "/" review))
 
 readPkgTreeDiffOutputFile :: FilePath -> IO [(Text, Text)]
 readPkgTreeDiffOutputFile fn = do
