@@ -1,0 +1,8 @@
+Code-Review+2: Tristan de Cacqueray <tdecacqu@redhat.com>
+Workflow+1: Tristan de Cacqueray <tdecacqu@redhat.com>
+Verified+2: Zuul CI <zuul@softwarefactory-project.io>
+Submitted-by: Zuul CI <zuul@softwarefactory-project.io>
+Submitted-at: Tue, 23 Feb 2021 17:22:34 +0000
+Reviewed-on: https://softwarefactory-project.io/r/21162
+Project: software-factory/sfinfo-haskell
+Branch: refs/heads/master
